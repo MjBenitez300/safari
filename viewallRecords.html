@@ -1,0 +1,224 @@
+<!DOCTYPE html>  
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>View Patient Records</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; text-align: center; background: #f9f9f9; }
+    h1 { margin-bottom: 20px; color: #333; }
+    #navButtons, #actionButtons { margin-bottom: 20px; }
+    #navButtons button, #actionButtons button {
+      margin: 5px; padding: 10px 18px; font-size: 16px; border: none;
+      border-radius: 5px; cursor: pointer; color: white; transition: background-color 0.3s;
+    }
+    #navButtons button { background-color: #007bff; }
+    #navButtons button:hover { background-color: #0056b3; }
+    #actionButtons button { background-color: #28a745; }
+    #actionButtons button:hover { background-color: #1e7e34; }
+    #deleteAllBtn { background-color: #dc3545; }
+    #deleteAllBtn:hover { background-color: #a71d2a; }
+    #viewHistoryBtn { background-color: #17a2b8; }
+    #viewHistoryBtn:hover { background-color: #117a8b; }
+
+    table { width: 100%; border-collapse: collapse; background: white; margin-top: 20px; box-shadow: 0 0 8px rgba(0,0,0,0.1); }
+    th, td { padding: 12px 15px; border: 1px solid #ddd; text-align: left; }
+    th { background-color: #007bff; color: white; }
+
+    #historySearchSection {
+      margin-top: 30px; background: white; padding: 20px; border-radius: 8px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1); max-width: 700px; margin-left: auto; margin-right: auto;
+      text-align: left; display: none;
+    }
+    #historySearchSection input[type="text"] {
+      width: 70%; padding: 8px; font-size: 16px; border: 1px solid #ccc; border-radius: 5px;
+    }
+    #historySearchSection button {
+      padding: 9px 18px; font-size: 16px; margin-left: 10px; background-color: #007bff;
+      border: none; color: white; border-radius: 5px; cursor: pointer; transition: background-color 0.3s;
+    }
+    #historySearchSection button:hover { background-color: #0056b3; }
+    #printAllHistoryBtn { background-color: #28a745; }
+    #printAllHistoryBtn:hover { background-color: #1e7e34; }
+    #closeHistoryBtn { background-color: #dc3545; }
+    #closeHistoryBtn:hover { background-color: #a71d2a; }
+    #historyResults { margin-top: 20px; }
+    #historyResults th { background-color: #17a2b8; color: white; }
+  </style>
+</head>
+<body>
+
+  <h1>View Patient Records</h1>
+
+  <div id="navButtons">
+    <button id="viewAllBtn">View All Records</button>
+    <button id="viewGuestBtn">View Guest Records</button>
+    <button id="viewEmployeeBtn">View Employee Records</button>
+  </div>
+
+  <div id="actionButtons">
+    <button id="printBtn">Print</button>
+    <button id="exportBtn">Export to Excel</button>
+    <button id="deleteAllBtn">Delete All Displayed Records</button>
+    <button id="backBtn">Back to Dashboard</button>
+    <button id="viewHistoryBtn">View History</button>
+  </div>
+
+  <table id="recordsTable"></table>
+
+  <div id="historySearchSection">
+    <label for="historySearchInput"><strong>Search Patient Name:</strong></label><br />
+    <input type="text" id="historySearchInput" placeholder="Enter patient name..." />
+    <button id="historySearchBtn">Search</button>
+    <button id="printAllHistoryBtn">Print All</button>
+    <button id="closeHistoryBtn">Close</button>
+    <div id="historyResults"></div>
+  </div>
+
+  <!-- ✅ Firestore Integration -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+    import {
+      getFirestore,
+      collection,
+      getDocs,
+      deleteDoc,
+      doc,
+      query,
+      where
+    } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+    // 🔹 Your Firebase Config
+    const firebaseConfig = {
+      apiKey: "AIzaSyD_rjgegrGF5cjcW0JQgip0rLGntDl9k9Q",
+      authDomain: "safari-cis.firebaseapp.com",
+      projectId: "safari-cis",
+      storageBucket: "safari-cis.firebasestorage.app",
+      messagingSenderId: "926885582043",
+      appId: "1:926885582043:web:b197acf3c55389f876e8fe"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const recordsTable = document.getElementById("recordsTable");
+    const viewAllBtn = document.getElementById("viewAllBtn");
+    const viewGuestBtn = document.getElementById("viewGuestBtn");
+    const viewEmployeeBtn = document.getElementById("viewEmployeeBtn");
+    const deleteAllBtn = document.getElementById("deleteAllBtn");
+    const historySearchSection = document.getElementById("historySearchSection");
+    const historySearchInput = document.getElementById("historySearchInput");
+    const historyResults = document.getElementById("historyResults");
+
+    let currentFilter = null;
+
+    const commonFields = [
+      { id: "patientNumber", label: "Patient Number" },
+      { id: "patientName", label: "Patient Name" },
+      { id: "patientAge", label: "Age" },
+      { id: "sex", label: "Sex" },
+      { id: "patientAddress", label: "Address" },
+      { id: "walkInDate", label: "Walk-in Date" },
+      { id: "chiefComplaint", label: "Chief Complaint" },
+      { id: "history", label: "History" },
+      { id: "medicationCombined", label: "Medication" }
+    ];
+
+    const employeeExtraFields = [
+      { id: "civilStatus", label: "Civil Status" },
+      { id: "department", label: "Department" }
+    ];
+
+    function renderTableHeader() {
+      recordsTable.innerHTML = "";
+      const header = recordsTable.createTHead().insertRow();
+      let fields = [...commonFields];
+      if (currentFilter === "employee") fields = fields.concat(employeeExtraFields);
+      fields.forEach(f => {
+        const th = document.createElement("th");
+        th.textContent = f.label;
+        header.appendChild(th);
+      });
+      const actionTh = document.createElement("th");
+      actionTh.textContent = "Action";
+      header.appendChild(actionTh);
+    }
+
+    async function loadPatients() {
+      let q;
+      if (currentFilter === "guest") {
+        q = query(collection(db, "patients"), where("type", "==", "guest"));
+      } else if (currentFilter === "employee") {
+        q = query(collection(db, "patients"), where("type", "==", "employee"));
+      } else {
+        q = collection(db, "patients");
+      }
+
+      const querySnapshot = await getDocs(q);
+      const patients = [];
+      querySnapshot.forEach(docSnap => patients.push({ id: docSnap.id, ...docSnap.data() }));
+      renderRecords(patients);
+    }
+
+    function renderRecords(patients) {
+      renderTableHeader();
+      const tbody = recordsTable.createTBody();
+      let fields = [...commonFields];
+      if (currentFilter === "employee") fields = fields.concat(employeeExtraFields);
+
+      if (patients.length === 0) {
+        const row = tbody.insertRow();
+        const cell = row.insertCell();
+        cell.colSpan = fields.length + 1;
+        cell.textContent = "No records found.";
+        return;
+      }
+
+      patients.forEach(p => {
+        const row = tbody.insertRow();
+        fields.forEach(f => {
+          const cell = row.insertCell();
+          cell.textContent = p[f.id] || "";
+        });
+        const actionCell = row.insertCell();
+        const delBtn = document.createElement("button");
+        delBtn.textContent = "Delete";
+        delBtn.style.backgroundColor = "#dc3545";
+        delBtn.style.color = "white";
+        delBtn.onclick = async () => {
+          if (confirm(`Delete record for ${p.patientName}?`)) {
+            await deleteDoc(doc(db, "patients", p.id));
+            alert("Deleted successfully!");
+            loadPatients();
+          }
+        };
+        actionCell.appendChild(delBtn);
+      });
+    }
+
+    deleteAllBtn.onclick = async () => {
+      if (!confirm("Delete all displayed records?")) return;
+      let q;
+      if (currentFilter === "guest") {
+        q = query(collection(db, "patients"), where("type", "==", "guest"));
+      } else if (currentFilter === "employee") {
+        q = query(collection(db, "patients"), where("type", "==", "employee"));
+      } else {
+        q = collection(db, "patients");
+      }
+      const querySnapshot = await getDocs(q);
+      for (const docSnap of querySnapshot.docs) {
+        await deleteDoc(doc(db, "patients", docSnap.id));
+      }
+      alert("All displayed records deleted.");
+      loadPatients();
+    };
+
+    viewAllBtn.onclick = () => { currentFilter = null; loadPatients(); };
+    viewGuestBtn.onclick = () => { currentFilter = "guest"; loadPatients(); };
+    viewEmployeeBtn.onclick = () => { currentFilter = "employee"; loadPatients(); };
+
+    loadPatients(); // initial load
+  </script>
+</body>
+</html>
